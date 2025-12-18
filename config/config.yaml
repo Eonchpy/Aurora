@@ -1,0 +1,23 @@
+api:
+  host: ${API_HOST:-0.0.0.0}
+  port: ${API_PORT:-8000}
+  debug: ${API_DEBUG:-false}
+
+database:
+  url: ${DATABASE_URL}
+
+embedding:
+  provider: ${EMBEDDING_PROVIDER:-openai}
+  dimension: ${EMBEDDING_DIMENSION:-1536}
+
+vectors:
+  index_type: ${VECTOR_INDEX_TYPE:-ivfflat}
+  index_lists: ${VECTOR_INDEX_LISTS:-100}
+
+namespaces:
+  default: ${DEFAULT_NAMESPACE:-default}
+
+async_queue:
+  enabled: ${ASYNC_QUEUE_ENABLED:-false}
+  redis_url: ${REDIS_URL:-redis://localhost:6379/0}
+  max_workers: ${MAX_WORKER_PROCESSES:-1}

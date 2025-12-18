@@ -1,0 +1,2 @@
+-- Placeholder for future async jobs schema
+-- This will be implemented when the queue is enabled.

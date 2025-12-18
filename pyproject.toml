@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aurora-kb"
+version = "0.1.0"
+description = "AuroraKB MVP backend and MCP services"
+authors = [{ name = "AuroraKB Team" }]
+requires-python = ">=3.12"
+dependencies = [
+    "asyncpg>=0.29.0,<1.0",
+    "fastapi>=0.115.0,<1.0.0",
+    "fastmcp",
+    "httpx>=0.27,<0.28",
+    "openai>=1.6,<2.0",
+    "pgvector>=0.3.6",
+    "pydantic>=2.7,<3.0",
+    "pydantic-settings>=2.2,<3.0",
+    "python-dotenv>=1.0,<2.0",
+    "sqlalchemy[asyncio]>=2.0.30,<3.0",
+    "tiktoken>=0.5.0,<1.0",
+    "uvicorn[standard]>=0.30.0,<1.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["aurora_api*", "aurora_mcp*", "aurora_queue*"]
+exclude = ["tests*", "database*", "config*", "scripts*"]
+
+[tool.uvicorn]
+app = "aurora_api.main:app"
+host = "0.0.0.0"
+port = 8000
+reload = true
