@@ -2,14 +2,11 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Iterable
 
 from aurora_mcp.database import ensure_pgvector, init_engine
 
 
-def discover_migrations() -> Iterable[Path]:
-    migrations_dir = Path(__file__).resolve().parent.parent / "database" / "migrations"
-    return sorted(migrations_dir.glob("*.sql"))
+MIGRATION_FILE = Path(__file__).resolve().parent.parent / "database" / "migrations" / "004_add_content_tsv.sql"
 
 
 def split_sql(sql_text: str) -> list[str]:
@@ -39,16 +36,16 @@ def split_sql(sql_text: str) -> list[str]:
     return statements
 
 
-async def run() -> None:
+async def apply_migration() -> None:
+    """Apply full-text search migration (content_tsv + index + trigger)."""
     engine = await init_engine()
     async with engine.begin() as conn:
         await ensure_pgvector()
-        for migration in discover_migrations():
-            sql_text = migration.read_text()
-            statements = split_sql(sql_text)
-            for stmt in statements:
-                await conn.exec_driver_sql(stmt)
+        sql_text = MIGRATION_FILE.read_text()
+        statements = split_sql(sql_text)
+        for statement in statements:
+            await conn.exec_driver_sql(statement)
 
 
 if __name__ == "__main__":
-    asyncio.run(run())
+    asyncio.run(apply_migration())

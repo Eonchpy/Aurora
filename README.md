@@ -5,6 +5,8 @@ AuroraKB is a semantic search-based knowledge base system that provides persiste
 ## Features
 
 - **Semantic Search**: Vector similarity search powered by OpenAI embeddings
+- **Project-Aware Context**: Automatically detects and prioritizes same-project content
+- **Smart Search Boost**: Same-project results get +0.15 similarity boost for better relevance
 - **Flexible Namespaces**: Isolate data by project or domain
 - **Metadata Filtering**: Filter by document type, author, tags, and more
 - **Pure MCP Architecture**: Direct database connection without HTTP middleware - simple and efficient
@@ -74,10 +76,7 @@ Add the following configuration to your Claude Code MCP config file:
       "args": ["run", "python", "-m", "aurora_mcp.server"],
       "cwd": "/absolute/path/to/AuroraKB",
       "env": {
-        // Database Configuration
         "DATABASE_URL": "postgresql+asyncpg://aurora_user:aurora_pass@localhost:5432/aurora_kb",
-
-        // Embedding Configuration
         "OPENAI_API_KEY": "sk-your-openai-api-key-here",
         "OPENAI_BASE_URL": "https://api.openai.com/v1",
         "EMBEDDING_MODEL": "text-embedding-3-small",
@@ -182,7 +181,7 @@ Requirements:
 
 ### aurora_ingest
 
-Store content into AuroraKB with automatic semantic vector generation.
+Store content into AuroraKB with automatic semantic vector generation and project detection.
 
 **Parameters**:
 - `content` (required): Text content to store
@@ -192,6 +191,7 @@ Store content into AuroraKB with automatic semantic vector generation.
 - `document_type` (required): Document type (e.g., conversation, document, decision, resolution)
 - `source` (required): Source identifier (e.g., claude_code, cursor, manual)
 - `metadata` (optional): Additional metadata object
+  - `file_path`: File path for automatic project detection (recommended)
   - `author`: Author name
   - `tags`: Tag array
   - `url`: Associated URL
@@ -199,20 +199,35 @@ Store content into AuroraKB with automatic semantic vector generation.
   - `chunk_index`: Chunk sequence number (for chunked storage)
   - `total_chunks`: Total number of chunks (for chunked storage)
 
+**Project Detection**:
+When `metadata.file_path` is provided, AuroraKB automatically detects the project root by looking for markers like `.git`, `package.json`, `pyproject.toml`, etc. The detected `project_path` is stored with the document and returned in the response.
+
 ### aurora_search
 
-Search content based on semantic similarity.
+Search content based on semantic similarity with optional project-aware boosting.
 
 **Parameters**:
 - `query` (required): Search query text
 - `namespace` (optional): Limit to specific namespace
 - `document_type` (optional): Filter by document type
 - `limit` (optional): Number of results to return, default 10
-- `threshold` (optional): Similarity threshold (0.0-1.0), default 0.7
+- `threshold` (optional): Similarity threshold (0.0-1.0), default 0.2
 - `metadata_filters` (optional): Metadata filters
   - `author`: Filter by author
   - `tags`: Filter by tags
   - `source`: Filter by source
+- `current_project_path` (optional): Current project path for boosting same-project results
+
+**Project-Aware Search**:
+When `current_project_path` is provided, documents from the same project receive a +0.15 similarity boost (capped at 1.0), making them rank higher in search results. This helps prioritize relevant context from your current project while still allowing cross-project search when needed.
+
+**Response Fields**:
+- `documents`: Array of matching documents
+  - `project_path`: Detected project path (if available)
+  - `is_same_project`: Boolean flag indicating if document is from current project
+  - `similarity_score`: Similarity score (boosted if same project)
+- `current_project`: Echo of the current_project_path parameter
+- `total_found`: Number of results returned
 
 ### aurora_retrieve
 

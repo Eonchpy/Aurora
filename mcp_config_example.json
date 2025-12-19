@@ -5,14 +5,7 @@
       "args": ["run", "python", "-m", "aurora_mcp.server"],
       "cwd": "/absolute/path/to/AuroraKB",
       "env": {
-        // ===========================================
-        // 数据库配置 (Database Configuration)
-        // ===========================================
         "DATABASE_URL": "postgresql+asyncpg://aurora_user:aurora_pass@localhost:5432/aurora_kb",
-
-        // ===========================================
-        // Embedding 配置 (Embedding Configuration)
-        // ===========================================
         "OPENAI_API_KEY": "sk-your-openai-api-key-here",
         "OPENAI_BASE_URL": "https://api.openai.com/v1",
         "EMBEDDING_MODEL": "text-embedding-3-small",

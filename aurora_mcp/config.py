@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     """MCP Server settings loaded from environment variables"""
 
     database_url: str = Field(
-        "postgresql+asyncpg://aurora_user:aurora_pass@localhost:5432/aurora_kb",
+        "postgresql+asyncpg://shenshunan:@localhost:5432/AuroraKB",
         alias="DATABASE_URL",
     )
 
