@@ -4,7 +4,10 @@ AuroraKB is a semantic search-based knowledge base system that provides persiste
 
 ## Features
 
-- **Semantic Search**: Vector similarity search powered by OpenAI embeddings
+- **Hybrid Search**: Combines semantic (70%) + keyword (30%) search for superior accuracy
+  - Semantic understanding via vector embeddings
+  - Position-aware keyword matching with PostgreSQL ts_rank_cd
+  - Automatic query optimization for short queries like "Phase 2 plan"
 - **Project-Aware Context**: Automatically detects and prioritizes same-project content
 - **Smart Search Boost**: Same-project results get +0.15 similarity boost for better relevance
 - **Flexible Namespaces**: Isolate data by project or domain
