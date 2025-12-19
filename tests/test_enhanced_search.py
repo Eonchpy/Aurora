@@ -74,7 +74,7 @@ async def test_search_with_boost():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(server, "get_session", lambda: _fake_get_session(rows))
 
-    result = await aurora_search("q", current_project_path="/proj", use_hybrid=False)
+    result = await aurora_search("q", current_project_path="/proj", use_hybrid=False, expand_query=False)
     monkeypatch.undo()
 
     assert result["documents"][0]["project_path"] == "/proj"
@@ -93,7 +93,7 @@ async def test_search_without_boost():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(server, "get_session", lambda: _fake_get_session(rows))
 
-    result = await aurora_search("q", use_hybrid=False)
+    result = await aurora_search("q", use_hybrid=False, expand_query=False)
     monkeypatch.undo()
 
     assert result["documents"][0]["similarity_score"] == 0.6
@@ -109,7 +109,7 @@ async def test_search_cap_at_one():
     monkeypatch = pytest.MonkeyPatch()
     monkeypatch.setattr(server, "get_session", lambda: _fake_get_session(rows))
 
-    result = await aurora_search("q", current_project_path="/proj", use_hybrid=False)
+    result = await aurora_search("q", current_project_path="/proj", use_hybrid=False, expand_query=False)
     monkeypatch.undo()
 
     assert result["documents"][0]["similarity_score"] == 1.0

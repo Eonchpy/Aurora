@@ -11,6 +11,29 @@
         "EMBEDDING_MODEL": "text-embedding-3-small",
         "EMBEDDING_DIMENSION": "1536"
       }
+    },
+    "aurora_kb_with_optimization": {
+      "comment": "Example with optional Query Expansion and Reranking enabled",
+      "command": "uv",
+      "args": ["run", "python", "-m", "aurora_mcp.server"],
+      "cwd": "/absolute/path/to/AuroraKB",
+      "env": {
+        "DATABASE_URL": "postgresql+asyncpg://aurora_user:aurora_pass@localhost:5432/aurora_kb",
+        "OPENAI_API_KEY": "sk-your-openai-api-key-here",
+        "OPENAI_BASE_URL": "https://api.openai.com/v1",
+        "EMBEDDING_MODEL": "text-embedding-3-small",
+        "EMBEDDING_DIMENSION": "1536",
+
+        "_comment_query_expansion": "Optional: Query Expansion (Phase 2) - Auto-enabled if model configured",
+        "QUERY_EXPANSION_MODEL": "gpt-3.5-turbo",
+        "QUERY_EXPANSION_BASE_URL": "https://api.openai.com/v1",
+        "QUERY_EXPANSION_API_KEY": "sk-your-openai-api-key-here",
+
+        "_comment_reranking": "Optional: Reranking (Phase 3) - Auto-enabled if model configured",
+        "RERANKING_MODEL": "gpt-3.5-turbo",
+        "RERANKING_BASE_URL": "https://api.openai.com/v1",
+        "RERANKING_API_KEY": "sk-your-openai-api-key-here"
+      }
     }
   }
 }

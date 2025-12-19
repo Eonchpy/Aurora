@@ -17,6 +17,8 @@ from aurora_mcp.database import get_session, init_engine
 from aurora_mcp.models import Document
 from aurora_mcp.services.embedding import EmbeddingService
 from aurora_mcp.utils.project_detector import find_project_root
+from aurora_mcp.services.query_expander import QueryExpander
+from aurora_mcp.services.reranker import Reranker
 
 
 # Initialize MCP server
@@ -163,7 +165,9 @@ async def aurora_search(
     threshold: float = 0.2,
     metadata_filters: Dict[str, Any] | None = None,
     current_project_path: str | None = None,
-    use_hybrid: bool = True
+    use_hybrid: bool = True,
+    expand_query: bool = True,
+    rerank: bool = False
 ) -> Dict[str, Any]:
     """Perform semantic or hybrid similarity search in AuroraKB to find relevant content.
 
@@ -188,6 +192,10 @@ async def aurora_search(
         metadata_filters: Optional metadata filters like author, tags, or source
         current_project_path: Optional project root path to boost same-project results (+0.15, capped at 1.0)
         use_hybrid: Use hybrid search (embedding + full-text, weighted) when True; embedding-only when False.
+        expand_query: Expand query via LLM when configured; falls back to original query on errors.
+        rerank: Rerank results via LLM when configured (default: False). Note: LLM reranking may introduce
+                biases (length bias, semantic confusion) and can reduce accuracy. Hybrid search with
+                mathematical scoring is often more reliable. Enable only for experimental purposes.
     """
     # Guard empty query
     if not query:
@@ -198,6 +206,27 @@ async def aurora_search(
             "current_project": current_project_path,
             "search_type": "hybrid" if use_hybrid else "embedding",
         }
+
+    original_query = query
+
+    # Optional query expansion (only when model configured)
+    settings = get_settings()
+    expanded_query = None
+    if expand_query and settings.query_expansion_model:
+        try:
+            expander = QueryExpander(
+                model=settings.query_expansion_model,
+                base_url=settings.query_expansion_base_url or settings.openai_base_url,
+                api_key=settings.query_expansion_api_key or settings.openai_api_key,
+                temperature=settings.query_expansion_temperature,
+                max_tokens=settings.query_expansion_max_tokens,
+            )
+            expanded = await expander.expand(query)
+            if expanded:
+                expanded_query = expanded
+                query = expanded
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Query expansion failed; using original query", exc_info=exc)
 
     # Get services
     embedding_service = await get_embedding_service()
@@ -326,22 +355,44 @@ async def aurora_search(
                 }
             )
 
+        # Optional reranking
+        reranked_docs = documents
+        rerank_model = settings.reranking_model
+        if rerank and rerank_model and documents:
+            try:
+                reranker = Reranker(
+                    model=rerank_model,
+                    base_url=settings.reranking_base_url or settings.openai_base_url,
+                    api_key=settings.reranking_api_key or settings.openai_api_key,
+                    temperature=settings.reranking_temperature,
+                    max_tokens=settings.reranking_max_tokens,
+                )
+                reranked_docs = await reranker.rerank(query, documents, settings.reranking_top_k)
+                logger.info(
+                    "Reranking applied",
+                    extra={"count": len(documents), "returned": len(reranked_docs), "model": rerank_model},
+                )
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Reranking failed; using original ranking", exc_info=exc)
+
         logger.info(
             "Hybrid search completed",
             extra={
                 "query": query,
                 "elapsed_ms": round(elapsed_ms, 3),
-                "total_found": len(documents),
+                "total_found": len(reranked_docs),
                 "search_type": search_type,
             },
         )
 
         return {
-            "documents": documents,
-            "total_found": len(documents),
+            "documents": reranked_docs,
+            "total_found": len(reranked_docs),
             "query": query,
             "current_project": current_project_path,
             "search_type": search_type,
+            "original_query": original_query,
+            "expanded_query": expanded_query,
         }
 
 

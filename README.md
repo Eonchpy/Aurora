@@ -8,6 +8,10 @@ AuroraKB is a semantic search-based knowledge base system that provides persiste
   - Semantic understanding via vector embeddings
   - Position-aware keyword matching with PostgreSQL ts_rank_cd
   - Automatic query optimization for short queries like "Phase 2 plan"
+- **Query Expansion**: Automatically expands queries with related terms via LLM to improve recall
+  - Configurable with any OpenAI-compatible API
+  - Smart caching to reduce latency and cost
+  - Graceful fallback to original query on errors
 - **Project-Aware Context**: Automatically detects and prioritizes same-project content
 - **Smart Search Boost**: Same-project results get +0.15 similarity boost for better relevance
 - **Flexible Namespaces**: Isolate data by project or domain
@@ -256,6 +260,28 @@ AuroraKB supports any OpenAI API-compatible embedding service:
 }
 ```
 
+### Enabling Query Expansion (Optional)
+
+Query Expansion uses LLM to automatically expand search queries with related terms, improving recall. To enable:
+
+```json
+{
+  "env": {
+    "QUERY_EXPANSION_MODEL": "deepseek-ai/DeepSeek-V3",
+    "QUERY_EXPANSION_BASE_URL": "https://api.siliconflow.cn/v1",
+    "QUERY_EXPANSION_API_KEY": "sk-your-api-key",
+    "QUERY_EXPANSION_TEMPERATURE": "0.3",
+    "QUERY_EXPANSION_MAX_TOKENS": "50"
+  }
+}
+```
+
+**Configuration Notes**:
+- Query expansion is automatically enabled when `QUERY_EXPANSION_MODEL` is configured
+- Falls back to `OPENAI_BASE_URL` and `OPENAI_API_KEY` if expansion-specific settings are not provided
+- Supports any OpenAI-compatible API endpoint
+- Results are cached for 1 hour to reduce latency and cost
+
 ## Development Guide
 
 ### Run Unit Tests
@@ -320,6 +346,40 @@ Check if OpenAI API key is valid:
 curl https://api.openai.com/v1/models \
   -H "Authorization: Bearer $OPENAI_API_KEY"
 ```
+
+## Search Optimization Status
+
+AuroraKB has completed a comprehensive search optimization initiative:
+
+### ✅ Phase 1: Hybrid Search (Completed)
+- **Status**: Production-ready
+- **Features**:
+  - Combines semantic search (70%) with PostgreSQL full-text search (30%)
+  - Position-aware keyword ranking using ts_rank_cd
+  - GIN index for efficient full-text search
+  - Automatic query optimization for short queries
+- **Impact**: Significantly improved search accuracy, especially for keyword-heavy queries
+
+### ✅ Phase 2: Query Expansion (Completed)
+- **Status**: Production-ready
+- **Features**:
+  - LLM-based query expansion with related terms
+  - Smart caching (1-hour TTL) to reduce latency and cost
+  - Configurable with any OpenAI-compatible API
+  - Graceful fallback to original query on errors
+  - Comprehensive input/output validation
+- **Impact**: Improved recall by expanding queries with semantically related terms
+
+### ❌ Phase 3: LLM Reranking (Deprecated)
+- **Status**: Implemented but disabled by default
+- **Reason**: Testing revealed that LLM-based reranking introduces biases that reduce accuracy:
+  - **Length bias**: LLMs favor longer, more "comprehensive" documents over focused ones
+  - **Semantic confusion**: LLMs may conflate similar concepts (e.g., "Implementation Timeline" vs "Execution Plan")
+  - **Information overload**: Processing 20+ documents with 600+ characters each degrades judgment quality
+- **Conclusion**: Hybrid search with mathematical scoring (embedding + keyword) is more reliable than subjective LLM judgment
+- **Future**: May revisit with specialized reranking models (Cohere Rerank, Jina Reranker) if needed
+
+**Current Recommendation**: Use Hybrid Search + Query Expansion for optimal results. Reranking can be enabled with `rerank=True` for experimental purposes, but is not recommended for production use.
 
 ## License
 
