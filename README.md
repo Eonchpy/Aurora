@@ -73,15 +73,18 @@ uv run python scripts/setup_db.py
 
 Add the following configuration to your Claude Code MCP config file:
 
-**Config file location**: `~/.config/claude/claude_desktop_config.json`
+**Config file location**:
+- Claude Desktop: `~/.config/claude/claude_desktop_config.json`
+- Claude Code: `~/.claude.json`
+
+**Recommended Configuration:**
 
 ```json
 {
   "mcpServers": {
     "aurora_kb": {
       "command": "uv",
-      "args": ["run", "python", "-m", "aurora_mcp.server"],
-      "cwd": "/absolute/path/to/AuroraKB",
+      "args": ["--directory", "/absolute/path/to/AuroraKB", "run", "python", "-m", "aurora_mcp.server"],
       "env": {
         "DATABASE_URL": "postgresql+asyncpg://aurora_user:aurora_pass@localhost:5432/aurora_kb",
         "OPENAI_API_KEY": "sk-your-openai-api-key-here",
