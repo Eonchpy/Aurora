@@ -33,6 +33,13 @@ class Settings(BaseSettings):
     reranking_max_tokens: int = Field(100, alias="RERANKING_MAX_TOKENS")
     reranking_top_k: int = Field(10, alias="RERANKING_TOP_K")
 
+    # Token Optimization: Summarization (optional, auto-enabled if model configured)
+    summarization_model: str | None = Field(None, alias="SUMMARIZATION_MODEL")
+    summarization_base_url: str | None = Field(None, alias="SUMMARIZATION_BASE_URL")
+    summarization_api_key: str | None = Field(None, alias="SUMMARIZATION_API_KEY")
+    summarization_temperature: float = Field(0.3, alias="SUMMARIZATION_TEMPERATURE")
+    summarization_max_tokens: int = Field(150, alias="SUMMARIZATION_MAX_TOKENS")
+
     # General settings
     max_content_length: int = Field(32000, alias="MAX_CONTENT_LENGTH")
     default_namespace: str = Field("default", alias="DEFAULT_NAMESPACE")

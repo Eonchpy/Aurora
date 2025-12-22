@@ -4,6 +4,12 @@ AuroraKB is a semantic search-based knowledge base system that provides persiste
 
 ## Features
 
+- **Token Optimization (Two-Stage Retrieval)**: Reduces token consumption by ~90%
+  - Returns brief summaries by default instead of full content
+  - Agents review summaries to determine relevance
+  - Fetch full content on-demand via `aurora_retrieve(document_id)`
+  - Automatic summarization at ingest time (zero search latency)
+  - Backward compatible with `include_full_content` parameter
 - **Hybrid Search**: Combines semantic (70%) + keyword (30%) search for superior accuracy
   - Semantic understanding via vector embeddings
   - Position-aware keyword matching with PostgreSQL ts_rank_cd
@@ -284,6 +290,50 @@ Query Expansion uses LLM to automatically expand search queries with related ter
 - Falls back to `OPENAI_BASE_URL` and `OPENAI_API_KEY` if expansion-specific settings are not provided
 - Supports any OpenAI-compatible API endpoint
 - Results are cached for 1 hour to reduce latency and cost
+
+### Enabling Token Optimization (Recommended)
+
+Token Optimization uses LLM to automatically generate brief summaries at ingest time, reducing search result token consumption by ~90%. To enable:
+
+```json
+{
+  "env": {
+    "SUMMARIZATION_MODEL": "deepseek-ai/DeepSeek-V3",
+    "SUMMARIZATION_BASE_URL": "https://api.siliconflow.cn/v1",
+    "SUMMARIZATION_API_KEY": "sk-your-api-key",
+    "SUMMARIZATION_TEMPERATURE": "0.3",
+    "SUMMARIZATION_MAX_TOKENS": "150"
+  }
+}
+```
+
+**Configuration Notes**:
+- Summarization is automatically enabled when `SUMMARIZATION_MODEL` is configured
+- **Smart fallback chain**:
+  1. Uses `SUMMARIZATION_BASE_URL` and `SUMMARIZATION_API_KEY` if provided
+  2. Falls back to `QUERY_EXPANSION_BASE_URL` and `QUERY_EXPANSION_API_KEY` (both are LLM tasks)
+  3. Finally falls back to `OPENAI_BASE_URL` and `OPENAI_API_KEY`
+- Summaries are generated at ingest time (adds ~300ms latency to ingestion)
+- Search returns summaries by default; use `include_full_content=True` for backward compatibility
+- Summaries are cached for 1 hour to avoid re-summarizing identical content
+
+**Backfilling Existing Documents**:
+
+After enabling summarization, generate summaries for existing documents:
+
+```bash
+# Dry run to preview
+uv run python scripts/backfill_summaries.py --dry-run
+
+# Process all documents (10 docs/batch, 6s delay)
+uv run python scripts/backfill_summaries.py
+
+# Custom batch size and delay
+uv run python scripts/backfill_summaries.py --batch-size 5 --delay 10
+
+# Process specific namespace only
+uv run python scripts/backfill_summaries.py --namespace my_project
+```
 
 ## Development Guide
 

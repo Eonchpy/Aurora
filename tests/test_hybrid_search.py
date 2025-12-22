@@ -35,13 +35,14 @@ class _FakeEmbeddingService:
         return [0.0, 0.0, 0.0]
 
 
-def _row(final_score: float, embedding_score: float, keyword_score: float | None = None, project_path: str | None = None):
+def _row(final_score: float, embedding_score: float, keyword_score: float | None = None, project_path: str | None = None, brief_summary: str | None = None):
     class Row:
         pass
 
     r = Row()
     r.id = uuid.uuid4()
     r.content = "content"
+    r.brief_summary = brief_summary
     r.metadata_json = {}
     r.namespace = "default"
     r.document_type = "document"

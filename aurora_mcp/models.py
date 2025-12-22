@@ -26,6 +26,7 @@ class Document(Base):
     project_path = Column(String(500), nullable=True, index=True)
     priority_level = Column(Integer, default=0, index=True)
     content_tsv = Column(TSVECTOR, nullable=True)
+    brief_summary = Column(Text, nullable=True)
     created_at = Column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False

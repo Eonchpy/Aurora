@@ -19,6 +19,7 @@ from aurora_mcp.services.embedding import EmbeddingService
 from aurora_mcp.utils.project_detector import find_project_root
 from aurora_mcp.services.query_expander import QueryExpander
 from aurora_mcp.services.reranker import Reranker
+from aurora_mcp.services.summarizer import Summarizer
 
 
 # Initialize MCP server
@@ -131,6 +132,27 @@ async def aurora_ingest(
     # Generate embedding
     embedding = await embedding_service.embed(content)
 
+    # Generate brief summary (optional, only if model configured)
+    brief_summary: str | None = None
+    settings = get_settings()
+    if settings.summarization_model:
+        try:
+            summarizer = Summarizer(
+                model=settings.summarization_model,
+                base_url=settings.summarization_base_url or settings.query_expansion_base_url or settings.openai_base_url,
+                api_key=settings.summarization_api_key or settings.query_expansion_api_key or settings.openai_api_key,
+                temperature=settings.summarization_temperature,
+                max_tokens=settings.summarization_max_tokens,
+            )
+            brief_summary = await summarizer.summarize(content)
+            if brief_summary:
+                logger.info(
+                    "Generated brief summary",
+                    extra={"content_length": len(content), "summary_length": len(brief_summary)}
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Summary generation failed; storing without summary", exc_info=exc)
+
     # Create document
     async for session in get_session():
         doc = Document(
@@ -141,6 +163,7 @@ async def aurora_ingest(
             document_type=document_type,
             source=source,
             project_path=project_path,
+            brief_summary=brief_summary,
         )
         session.add(doc)
         await session.commit()
@@ -152,6 +175,7 @@ async def aurora_ingest(
             "document_type": doc.document_type,
             "token_count": token_count,
             "project_path": project_path,
+            "has_summary": brief_summary is not None,
             "created_at": doc.created_at.isoformat()
         }
 
@@ -167,13 +191,19 @@ async def aurora_search(
     current_project_path: str | None = None,
     use_hybrid: bool = True,
     expand_query: bool = True,
-    rerank: bool = False
+    rerank: bool = False,
+    include_full_content: bool = False
 ) -> Dict[str, Any]:
     """Perform semantic or hybrid similarity search in AuroraKB to find relevant content.
 
     By default, searches across ALL document types to maximize recall and find the most relevant
     content regardless of where it's stored. Semantic search works best without artificial
     constraints - let similarity scores determine relevance.
+
+    **Token Optimization (Two-Stage Retrieval):**
+    By default, returns brief summaries instead of full content to reduce token consumption by ~90%.
+    - Stage 1 (Search): Review summaries to determine relevance
+    - Stage 2 (Retrieve): Use aurora_retrieve(document_id) to fetch full content for relevant documents
 
     Use document_type filter ONLY when the user explicitly mentions a specific type in their query:
     - "find documents about X" → use document_type="document"
@@ -196,6 +226,8 @@ async def aurora_search(
         rerank: Rerank results via LLM when configured (default: False). Note: LLM reranking may introduce
                 biases (length bias, semantic confusion) and can reduce accuracy. Hybrid search with
                 mathematical scoring is often more reliable. Enable only for experimental purposes.
+        include_full_content: Return full document content instead of summaries (default: False).
+                             Set to True for backward compatibility or when full content is needed immediately.
     """
     # Guard empty query
     if not query:
@@ -247,6 +279,7 @@ async def aurora_search(
         stmt = select(
             Document.id,
             Document.content,
+            Document.brief_summary,
             Document.metadata_json,
             Document.namespace,
             Document.document_type,
@@ -336,10 +369,27 @@ async def aurora_search(
             final_score = (
                 float(row.final_score) if hasattr(row, "final_score") else embedding_score
             )
+
+            # Token Optimization: Return summary by default, full content on request
+            if include_full_content:
+                # Backward compatibility: return full content
+                content_field = row.content
+                has_summary = row.brief_summary is not None
+            else:
+                # Two-stage retrieval: return summary if available, else truncated content
+                if row.brief_summary:
+                    content_field = row.brief_summary
+                    has_summary = True
+                else:
+                    # Fallback: truncate content to first 200 tokens (~800 chars)
+                    content_field = row.content[:800] + "..." if len(row.content) > 800 else row.content
+                    has_summary = False
+
             documents.append(
                 {
                     "id": str(row.id),
-                    "content": row.content,
+                    "content": content_field,
+                    "has_summary": has_summary,
                     "metadata": row.metadata_json or {},
                     "namespace": row.namespace,
                     "document_type": row.document_type,
