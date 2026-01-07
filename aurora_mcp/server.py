@@ -4,7 +4,7 @@ import asyncio
 import logging
 import re
 import time
-from typing import Any, Dict
+from typing import Any, Dict, Literal
 from uuid import UUID
 
 import tiktoken
@@ -24,6 +24,15 @@ from aurora_mcp.services.summarizer import Summarizer
 
 # Initialize MCP server
 mcp = FastMCP("aurora_kb")
+
+# Allowed document types (enforced at ingest time)
+ALLOWED_DOCUMENT_TYPES = {
+    "document",      # General documents
+    "conversation",  # Conversation records
+    "decision",      # Decision records
+    "resolution",    # Resolutions/solutions
+    "report"         # Report documents
+}
 
 # Global services (initialized on first use)
 _embedding_service: EmbeddingService | None = None
@@ -61,10 +70,12 @@ async def get_embedding_service() -> EmbeddingService:
 @mcp.tool()
 async def aurora_ingest(
     content: str,
-    document_type: str,
-    source: str,
+    document_type: Literal["document", "conversation", "decision", "resolution", "report"],
+    title: str,
     namespace: str = "default",
-    metadata: Dict[str, Any] | None = None
+    source: str | None = None,
+    metadata: Dict[str, Any] | None = None,
+    working_directory: str | None = None,
 ) -> Dict[str, Any]:
     """Store content into AuroraKB with automatic semantic embedding generation.
 
@@ -87,16 +98,29 @@ async def aurora_ingest(
     Args:
         content: Text content to store (max ~8000 tokens / ~32,000 characters)
         document_type: Type of content ('conversation', 'document', 'decision', 'resolution')
-        source: Source system or origin (e.g., 'claude_code', 'cursor', 'manual')
+        title: Brief title or description (REQUIRED). Used for search result display to enable
+               two-stage retrieval optimization. Should be concise (1-2 sentences) and descriptive.
         namespace: Namespace for project/domain isolation (default: 'default')
+        source: Source/role identifier (optional, e.g., 'qc', 'backend', 'frontend')
+                If not provided, uses AURORA_AGENT_ID from env, or defaults to 'unknown'
         metadata: Optional metadata for flexible filtering and chunk linking
-                 Suggested fields: parent_id, chunk_index, total_chunks, author, tags, file_path
+                 Suggested fields: parent_id, chunk_index, total_chunks, author, tags
+        working_directory: Current working directory path (recommended). Used to auto-detect
+                          project root for project-aware search. Pass your cwd here.
 
     Project detection:
-        - When metadata.file_path is provided, project root is auto-detected and stored in project_path
+        - When working_directory is provided, project root is auto-detected and stored in project_path
         - project_path is included in the response for transparency
-        - If detection fails or file_path is missing, project_path will be None
+        - If detection fails or working_directory is missing, project_path will be None
     """
+    # Validate document_type
+    if document_type not in ALLOWED_DOCUMENT_TYPES:
+        return {
+            "error": f"Invalid document_type: '{document_type}'",
+            "allowed_types": sorted(list(ALLOWED_DOCUMENT_TYPES)),
+            "suggestion": "Please use one of the allowed document types"
+        }
+
     # Validate content length
     token_count = count_tokens(content)
     if token_count > MAX_EMBEDDING_TOKENS:
@@ -114,44 +138,28 @@ async def aurora_ingest(
             )
         }
 
+    # Auto-detect source if not provided
+    if source is None:
+        settings = get_settings()
+        source = settings.agent_id or "unknown"
+
     # Get services
     embedding_service = await get_embedding_service()
 
-    # Detect project path if file_path provided
+    # Detect project path from working_directory (preferred)
     project_path: str | None = None
-    file_path = None
-    if metadata and isinstance(metadata, dict):
-        file_path = metadata.get("file_path")
-    if file_path:
-        project_path = find_project_root(str(file_path))
+    if working_directory:
+        project_path = find_project_root(working_directory)
         if project_path:
-            logger.info("Detected project_path=%s for file_path=%s", project_path, file_path)
+            logger.info("Detected project_path=%s from working_directory=%s", project_path, working_directory)
         else:
-            logger.debug("No project detected for file_path=%s", file_path)
+            logger.debug("No project detected for working_directory=%s", working_directory)
 
     # Generate embedding
     embedding = await embedding_service.embed(content)
 
-    # Generate brief summary (optional, only if model configured)
-    brief_summary: str | None = None
-    settings = get_settings()
-    if settings.summarization_model:
-        try:
-            summarizer = Summarizer(
-                model=settings.summarization_model,
-                base_url=settings.summarization_base_url or settings.query_expansion_base_url or settings.openai_base_url,
-                api_key=settings.summarization_api_key or settings.query_expansion_api_key or settings.openai_api_key,
-                temperature=settings.summarization_temperature,
-                max_tokens=settings.summarization_max_tokens,
-            )
-            brief_summary = await summarizer.summarize(content)
-            if brief_summary:
-                logger.info(
-                    "Generated brief summary",
-                    extra={"content_length": len(content), "summary_length": len(brief_summary)}
-                )
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Summary generation failed; storing without summary", exc_info=exc)
+    # Use agent-provided title as brief_summary (required field)
+    brief_summary: str = title
 
     # Create document
     async for session in get_session():
@@ -175,7 +183,7 @@ async def aurora_ingest(
             "document_type": doc.document_type,
             "token_count": token_count,
             "project_path": project_path,
-            "has_summary": brief_summary is not None,
+            "title": brief_summary,
             "created_at": doc.created_at.isoformat()
         }
 
@@ -190,7 +198,7 @@ async def aurora_search(
     metadata_filters: Dict[str, Any] | None = None,
     current_project_path: str | None = None,
     use_hybrid: bool = True,
-    expand_query: bool = True,
+    expand_query: bool = False,
     rerank: bool = False,
     include_full_content: bool = False
 ) -> Dict[str, Any]:
@@ -200,8 +208,12 @@ async def aurora_search(
     content regardless of where it's stored. Semantic search works best without artificial
     constraints - let similarity scores determine relevance.
 
+    **Search Tips:**
+    For better recall, consider adding synonyms or related terms to your query before calling.
+    Example: "Phase 4 plan" → "Phase 4 plan execution implementation 执行计划"
+
     **Token Optimization (Two-Stage Retrieval):**
-    By default, returns brief summaries instead of full content to reduce token consumption by ~90%.
+    By default, returns brief summaries instead of full content to reduce token consumption.
     - Stage 1 (Search): Review summaries to determine relevance
     - Stage 2 (Retrieve): Use aurora_retrieve(document_id) to fetch full content for relevant documents
 
@@ -213,7 +225,7 @@ async def aurora_search(
     Returns documents ranked by semantic similarity score, with the most relevant content first.
 
     Args:
-        query: Search query text describing what you're looking for
+        query: Search query text. For better recall, include synonyms or related terms.
         namespace: Filter by namespace/project (optional, use only if user specifies a project)
         document_type: Filter by specific type (optional, use only when user explicitly mentions type)
                       Available: 'conversation', 'document', 'decision', 'resolution'
@@ -222,10 +234,10 @@ async def aurora_search(
         metadata_filters: Optional metadata filters like author, tags, or source
         current_project_path: Optional project root path to boost same-project results (+0.15, capped at 1.0)
         use_hybrid: Use hybrid search (embedding + full-text, weighted) when True; embedding-only when False.
-        expand_query: Expand query via LLM when configured; falls back to original query on errors.
-        rerank: Rerank results via LLM when configured (default: False). Note: LLM reranking may introduce
-                biases (length bias, semantic confusion) and can reduce accuracy. Hybrid search with
-                mathematical scoring is often more reliable. Enable only for experimental purposes.
+        expand_query: Use LLM to auto-expand query (default: False). Usually unnecessary as you can
+                     expand the query yourself with better context awareness.
+        rerank: Rerank results via LLM (default: False). Usually unnecessary as hybrid search with
+                mathematical scoring is more reliable than LLM subjective judgment.
         include_full_content: Return full document content instead of summaries (default: False).
                              Set to True for backward compatibility or when full content is needed immediately.
     """
@@ -490,6 +502,258 @@ async def aurora_retrieve(
             response["embedding"] = doc.embedding_vector
 
         return response
+
+
+@mcp.tool()
+async def aurora_update(
+    document_id: str,
+    content: str | None = None,
+    metadata: dict | None = None,
+    document_type: str | None = None
+) -> Dict[str, Any]:
+    """Update an existing document in AuroraKB.
+
+    Use this to modify document content, metadata, or document type.
+    When content is updated, the embedding vector will be regenerated automatically.
+
+    Args:
+        document_id: Unique document identifier
+        content: New content (optional, will regenerate embedding if provided)
+        metadata: New metadata (optional, will merge with existing)
+        document_type: New document type (optional)
+
+    Returns:
+        Updated document information or error message
+    """
+    async for session in get_session():
+        # Parse UUID
+        try:
+            doc_uuid = UUID(document_id)
+        except ValueError:
+            return {"error": f"Invalid document ID format: {document_id}"}
+
+        # Query document
+        stmt = select(Document).where(Document.id == doc_uuid)
+        result = await session.execute(stmt)
+        doc = result.scalar_one_or_none()
+
+        if not doc:
+            return {"error": f"Document not found: {document_id}"}
+
+        # Track what was updated
+        updated_fields = []
+
+        # Update content and regenerate embedding if provided
+        if content is not None:
+            # Validate content length
+            token_count = count_tokens(content)
+            if token_count > MAX_EMBEDDING_TOKENS:
+                return {
+                    "error": "Content exceeds maximum length",
+                    "token_count": token_count,
+                    "max_tokens": MAX_EMBEDDING_TOKENS
+                }
+
+            doc.content = content
+            updated_fields.append("content")
+
+            # Regenerate embedding
+            embedding_service = await get_embedding_service()
+            doc.embedding_vector = await embedding_service.embed(content)
+            updated_fields.append("embedding")
+
+            # Regenerate summary if configured
+            settings = get_settings()
+            if settings.summarization_model:
+                try:
+                    from aurora_mcp.services.summarizer import Summarizer
+                    summarizer = Summarizer(
+                        model=settings.summarization_model,
+                        base_url=settings.summarization_base_url or settings.query_expansion_base_url or settings.openai_base_url,
+                        api_key=settings.summarization_api_key or settings.query_expansion_api_key or settings.openai_api_key,
+                        temperature=settings.summarization_temperature,
+                        max_tokens=settings.summarization_max_tokens,
+                    )
+                    doc.brief_summary = await summarizer.summarize(content)
+                    updated_fields.append("summary")
+                except Exception as exc:
+                    logger.warning("Summary regeneration failed", exc_info=exc)
+
+        # Update metadata (merge with existing)
+        if metadata is not None:
+            existing_metadata = doc.metadata_json or {}
+            existing_metadata.update(metadata)
+            # Force SQLAlchemy to detect the change
+            from sqlalchemy.orm.attributes import flag_modified
+            doc.metadata_json = existing_metadata
+            flag_modified(doc, "metadata_json")
+            updated_fields.append("metadata")
+
+        # Update document type
+        if document_type is not None:
+            doc.document_type = document_type
+            updated_fields.append("document_type")
+
+        if not updated_fields:
+            return {"error": "No fields to update"}
+
+        # Commit changes
+        await session.commit()
+        await session.refresh(doc)
+
+        return {
+            "id": str(doc.id),
+            "updated_fields": updated_fields,
+            "namespace": doc.namespace,
+            "document_type": doc.document_type,
+            "updated_at": doc.updated_at.isoformat()
+        }
+
+
+@mcp.tool()
+async def aurora_delete(
+    document_id: str
+) -> Dict[str, Any]:
+    """Delete a document from AuroraKB.
+
+    Use this to remove documents that are no longer needed or were created by mistake.
+    This operation is permanent and cannot be undone.
+
+    Args:
+        document_id: Unique document identifier
+
+    Returns:
+        Deletion confirmation or error message
+    """
+    async for session in get_session():
+        # Parse UUID
+        try:
+            doc_uuid = UUID(document_id)
+        except ValueError:
+            return {"error": f"Invalid document ID format: {document_id}"}
+
+        # Query document
+        stmt = select(Document).where(Document.id == doc_uuid)
+        result = await session.execute(stmt)
+        doc = result.scalar_one_or_none()
+
+        if not doc:
+            return {"error": f"Document not found: {document_id}"}
+
+        # Store info before deletion
+        doc_info = {
+            "id": str(doc.id),
+            "namespace": doc.namespace,
+            "document_type": doc.document_type,
+            "created_at": doc.created_at.isoformat()
+        }
+
+        # Delete document
+        await session.delete(doc)
+        await session.commit()
+
+        return {
+            "success": True,
+            "message": "Document deleted successfully",
+            "deleted_document": doc_info
+        }
+
+
+@mcp.tool()
+async def aurora_list(
+    namespace: str | None = None,
+    document_type: str | None = None,
+    source: str | None = None,
+    project_path: str | None = None,
+    limit: int = 20,
+    offset: int = 0
+) -> Dict[str, Any]:
+    """List documents from AuroraKB with structured filtering.
+
+    Use this to browse documents by namespace, type, source, or project.
+    Returns brief document information for users to select and retrieve.
+
+    Args:
+        namespace: Filter by namespace (optional)
+        document_type: Filter by document type (optional)
+        source: Filter by source (optional)
+        project_path: Filter by project path (optional)
+        limit: Maximum number of results (default: 20, max: 100)
+        offset: Number of results to skip for pagination (default: 0)
+
+    Returns:
+        List of documents with brief information (id, title, preview)
+    """
+    # Validate limit
+    if limit > 100:
+        limit = 100
+    if limit < 1:
+        limit = 1
+
+    async for session in get_session():
+        # Build query
+        stmt = select(
+            Document.id,
+            Document.brief_summary,
+            Document.content,
+            Document.namespace,
+            Document.document_type,
+            Document.source,
+            Document.project_path,
+            Document.created_at
+        )
+
+        # Apply filters (case-insensitive for string fields)
+        if namespace:
+            stmt = stmt.where(func.lower(Document.namespace) == namespace.lower())
+        if document_type:
+            stmt = stmt.where(func.lower(Document.document_type) == document_type.lower())
+        if source:
+            stmt = stmt.where(func.lower(Document.source) == source.lower())
+        if project_path:
+            stmt = stmt.where(func.lower(Document.project_path) == project_path.lower())
+
+        # Order by created_at descending (newest first)
+        stmt = stmt.order_by(Document.created_at.desc())
+
+        # Get total count
+        count_stmt = select(func.count()).select_from(stmt.subquery())
+        total = await session.scalar(count_stmt)
+
+        # Apply pagination
+        stmt = stmt.limit(limit).offset(offset)
+
+        # Execute query
+        result = await session.execute(stmt)
+        rows = result.fetchall()
+
+        documents = []
+        for row in rows:
+            # Use title if available, otherwise create preview
+            if row.brief_summary:
+                display_text = row.brief_summary
+            else:
+                # Create preview from first 100 characters
+                display_text = row.content[:100] + "..." if len(row.content) > 100 else row.content
+
+            documents.append({
+                "id": str(row.id),
+                "title": row.brief_summary,
+                "preview": display_text,
+                "namespace": row.namespace,
+                "document_type": row.document_type,
+                "source": row.source,
+                "project_path": row.project_path,
+                "created_at": row.created_at.isoformat()
+            })
+
+        return {
+            "documents": documents,
+            "total": total or 0,
+            "limit": limit,
+            "offset": offset,
+            "has_more": (offset + len(documents)) < (total or 0)
+        }
 
 
 async def main() -> None:

@@ -43,6 +43,7 @@ class Settings(BaseSettings):
     # General settings
     max_content_length: int = Field(32000, alias="MAX_CONTENT_LENGTH")
     default_namespace: str = Field("default", alias="DEFAULT_NAMESPACE")
+    agent_id: str | None = Field(None, alias="AURORA_AGENT_ID")
 
     model_config = SettingsConfigDict(
         env_file=(".env", "config/.env"),
